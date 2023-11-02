@@ -69,6 +69,19 @@ def findHypsUsedByTactic (goalId: MVarId) (goalDecl : MetavarDecl) (mctxAfter : 
   -- dbg_trace s!"Used {pretty}"
   return proofFvars.map (fun x => x.fvarId.name.toString) |>.toList
 
+def getHyps : MetaM (List Hypothesis):= do
+  (← read).lctx.foldlM (init := []) (fun acc decl => do
+    if decl.isAuxDecl || decl.isImplementationDetail then
+      return acc
+    let type ← Meta.ppExpr decl.type
+    let value ← decl.value?.mapM (Meta.ppExpr)
+    return ({
+      username := decl.userName.toString,
+      type := type.pretty,
+      value := value.map (·.pretty),
+      id := decl.fvarId.name.toString
+      } : Hypothesis) ::acc)
+
 -- Returns GoalInfo about unassigned goals from the provided list of goals
 def getGoals (printCtx: ContextInfo) (goals : List MVarId) (mctx : MetavarContext) : RequestM (List GoalInfo) := do
   goals.filterMapM fun id => do
@@ -80,17 +93,7 @@ def getGoals (printCtx: ContextInfo) (goals : List MVarId) (mctx : MetavarContex
     -- to get tombstones in name ✝ for unreachable hypothesis
     let lctx := decl.lctx |>.sanitizeNames.run' {options := {}}
     let ppContext := printCtx.toPPContext lctx
-    let hyps ← lctx.foldlM (init := []) (fun acc decl => do
-      if decl.isAuxDecl || decl.isImplementationDetail then
-        return acc
-      let type ← liftM (ppExprWithInfos ppContext decl.type)
-      let value ← liftM (decl.value?.mapM (ppExprWithInfos ppContext))
-      return ({
-        username := decl.userName.toString,
-        type := type.fmt.pretty,
-        value := value.map (·.fmt.pretty),
-        id := decl.fvarId.name.toString
-        } : Hypothesis) ::acc)
+    let hyps ← ppContext.runMetaM getHyps
     return some ⟨ decl.userName.toString, (← ppExprWithInfos ppContext decl.type).fmt.pretty, hyps, id.name.toString ⟩
 
 structure Result where
@@ -210,21 +213,23 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
           let newStep? ← ctx.runMetaM tInfo.lctx do
             if (← Meta.isProof tInfo.expr) then
               let tacticString := s!"apply {← Meta.ppExpr fn}"
+              let username := (← Meta.ppExpr tInfo.expr).pretty
               let goalsBefore :=
                 [{
-                  username := "Goal before",
+                  username,
                   type := (← Meta.ppExpr type).pretty,
-                  hyps := [],
-                  id := "19"
+                  hyps := ← getHyps,
+                  id := username
                 }]
               let goalsAfter ← args.toList.filterMapM fun arg => do
                 if ← Meta.isProof arg then
                   let type ← Meta.inferType arg
+                  let username := (← Meta.ppExpr arg).pretty
                   return some {
-                    username := "Goal after",
+                    username,
                     type := (← Meta.ppExpr type).pretty,
-                    hyps := [],
-                    id := "14"
+                    hyps := ← getHyps,
+                    id := username
                   }
                 else
                   return none
