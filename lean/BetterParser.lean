@@ -207,7 +207,7 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
           let args := tInfo.expr.getAppArgs
           let pArgs := ← args.mapM print
 
-          ctx.runMetaM tInfo.lctx do
+          let newStep? ← ctx.runMetaM tInfo.lctx do
             if (← Meta.isProof tInfo.expr) then
               let tacticString := s!"apply {← Meta.ppExpr fn}"
               let goalsBefore :=
@@ -237,6 +237,14 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
               }
 
               dbg_trace "App: {toJson tacticApp}"
+              return some tacticApp
+            else
+              return none
+
+          if let some newStep := newStep? then
+            return { steps := .tacticApp newStep :: steps, allGoals := allSubGoals }
+          else
+            return { steps, allGoals := allSubGoals }
         else
           dbg_trace "No expected type"
       | _ =>
