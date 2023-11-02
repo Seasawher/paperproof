@@ -195,6 +195,47 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
     else if let .ofTermInfo tInfo := i then
       -- Interesting elaborations:
       match tInfo.elaborator with
+      -- Other elab Q → (P ∧ Q) ∧ Q ∧ P : Prop @ ⟨5, 5⟩-⟨5, 33⟩ @ Lean.Elab.Term.elabDepArrow
+      | ``Lean.Elab.Term.elabFun =>
+        dbg_trace "Dep arrow"
+        let newStep? ← ctx.runMetaM tInfo.lctx do
+          if !(← Meta.isProof tInfo.expr) then
+            return none
+          let intros := tInfo.expr.getForallBinderNames
+          let body := tInfo.expr.getForallBody
+          let tacticString := s!"intros {intros}"
+          let username := (← Meta.ppExpr tInfo.expr).pretty
+          if let some type := tInfo.expectedType? then
+            let goalsBefore :=
+              [{
+                username,
+                type := (← Meta.ppExpr type).pretty,
+                hyps := ← getHyps,
+                id := username
+              }]
+            let username₂ := (← Meta.ppExpr body).pretty
+            let bodyType ← Meta.inferType type
+            let goalsAfter := [{
+              username := username₂,
+              type := (← Meta.ppExpr bodyType).pretty,
+              -- Add intros
+              hyps := ← getHyps,
+              id := username₂
+            }]
+            let tacticDependsOn := []
+
+            let tacticApp: TacticApplication :=
+              {tacticString, goalsBefore, goalsAfter, tacticDependsOn}
+
+            return some tacticApp
+          else
+            return none
+
+        if let some newStep := newStep? then
+          return { steps := .tacticApp newStep :: steps, allGoals := allSubGoals }
+        else
+          return { steps, allGoals := allSubGoals }
+
       | ``Lean.Elab.Term.elabApp =>
         -- For app `(th (arg1 : A₁) (arg2 : A₂)) : R₁` we will create `apply Th` tactic with
         -- goalsBefore = `[R₁]` and goalsAfter = `[A₁, A₂]`
@@ -232,7 +273,7 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
                 tacticDependsOn
               }
 
-              dbg_trace "App: {toJson tacticApp}"
+              -- dbg_trace "App: {toJson tacticApp}"
               return some tacticApp
             else
               return none
@@ -244,6 +285,7 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
         else
           dbg_trace "No expected type"
       | _ =>
+        -- dbg_trace "Other elab {← tInfo.format ctx}"
         return { steps, allGoals := allSubGoals}
       --  { left := p, right := q } : P ∧ Q @ ⟨5, 2⟩†-⟨5, 8⟩† @ Lean.Elab.Term.elabApp
       -- Abstraction?
