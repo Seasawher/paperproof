@@ -13,7 +13,7 @@ structure Hypothesis where
 structure GoalInfo where
   username : String
   type : String
-  hyps : List Hypothesis 
+  hyps : List Hypothesis
   -- unique identifier for the goal, mvarId
   id : String
   deriving Inhabited, ToJson, FromJson
@@ -27,11 +27,11 @@ instance : Hashable GoalInfo where
 structure TacticApplication where
   tacticString : String
   goalsBefore : List GoalInfo
-  goalsAfter : List GoalInfo 
+  goalsAfter : List GoalInfo
   tacticDependsOn : List String
   deriving Inhabited, ToJson, FromJson
 
-inductive ProofStep := 
+inductive ProofStep :=
   | tacticApp (t : TacticApplication)
   | haveDecl (t: TacticApplication)
     (initialGoals: List GoalInfo)
@@ -88,7 +88,7 @@ def getGoals (printCtx: ContextInfo) (goals : List MVarId) (mctx : MetavarContex
       return ({
         username := decl.userName.toString,
         type := type.fmt.pretty,
-        value := value.map (·.fmt.pretty), 
+        value := value.map (·.fmt.pretty),
         id := decl.fvarId.name.toString
         } : Hypothesis) ::acc)
     return some ⟨ decl.userName.toString, (← ppExprWithInfos ppContext decl.type).fmt.pretty, hyps, id.name.toString ⟩
@@ -142,7 +142,7 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
         | return {steps, allGoals}
       let some mainGoalDecl := tInfo.mctxBefore.findDecl? mainGoalId
         | return {steps, allGoals}
-      
+
       let tacticDependsOn ←
         ctx.runMetaM mainGoalDecl.lctx
           (findHypsUsedByTactic mainGoalId mainGoalDecl tInfo.mctxAfter)
@@ -159,8 +159,8 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
         -- Something like `have p : a = a := rfl`
         if steps.isEmpty then
           return {steps := [.tacticApp tacticApp],
-                  allGoals} 
- 
+                  allGoals}
+
         let goals := (goalsBefore ++ goalsAfter).foldl HashSet.erase (noInEdgeGoals allGoals steps)
         -- Important for have := calc for example, e.g. calc 3 < 4 ... 4 < 5 ...
         let sortedGoals := goals.toArray.insertionSort (·.id < ·.id)
@@ -173,7 +173,7 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
           let res := tStr.trim.dropRightWhile (· == ',')
           -- rw puts final rfl on the "]" token
           if res == "]" then "rfl" else res
-        return {steps := steps.map fun a => 
+        return {steps := steps.map fun a =>
                   match a with
                   | .tacticApp a => .tacticApp { a with tacticString := s!"rw [{prettify a.tacticString}]" }
                   | x => x,
@@ -189,6 +189,61 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
         let orphanedGoals := goalsBefore.foldl HashSet.erase (noInEdgeGoals allSubGoals steps)
         return {steps := .tacticApp {tacticApp with goalsAfter := goalsAfter ++ orphanedGoals.toList} :: steps,
                 allGoals}
+    else if let .ofTermInfo tInfo := i then
+      -- Interesting elaborations:
+      match tInfo.elaborator with
+      | ``Lean.Elab.Term.elabApp =>
+        -- For app `(th (arg1 : A₁) (arg2 : A₂)) : R₁` we will create `apply Th` tactic with
+        -- goalsBefore = `[R₁]` and goalsAfter = `[A₁, A₂]`
+        let ppContext := ctx.toPPContext tInfo.lctx
+        -- For type: (← ppExprWithInfos ppContext decl.type).fmt.pretty
+        if let some type := tInfo.expectedType? then
+          -- match tInfo.expr with
+          -- |
+          let print (e : Expr) := do
+            let res ← ppExprWithInfos ppContext e
+            return res.fmt.pretty
+          let fn := tInfo.expr.getAppFn
+          let args := tInfo.expr.getAppArgs
+          let pArgs := ← args.mapM print
+
+          ctx.runMetaM tInfo.lctx do
+            if (← Meta.isProof tInfo.expr) then
+              let tacticString := s!"apply {← Meta.ppExpr fn}"
+              let goalsBefore :=
+                [{
+                  username := "Goal before",
+                  type := (← Meta.ppExpr type).pretty,
+                  hyps := [],
+                  id := "19"
+                }]
+              let goalsAfter ← args.toList.filterMapM fun arg => do
+                if ← Meta.isProof arg then
+                  let type ← Meta.inferType arg
+                  return some {
+                    username := "Goal after",
+                    type := (← Meta.ppExpr type).pretty,
+                    hyps := [],
+                    id := "14"
+                  }
+                else
+                  return none
+              let tacticDependsOn := []
+              let tacticApp: TacticApplication := {
+                tacticString,
+                goalsBefore,
+                goalsAfter,
+                tacticDependsOn
+              }
+
+              dbg_trace "App: {toJson tacticApp}"
+        else
+          dbg_trace "No expected type"
+      | _ =>
+        return { steps, allGoals := allSubGoals}
+      --  { left := p, right := q } : P ∧ Q @ ⟨5, 2⟩†-⟨5, 8⟩† @ Lean.Elab.Term.elabApp
+      -- Abstraction?
+      return { steps, allGoals := allSubGoals}
     else
       return { steps, allGoals := allSubGoals}
   | none, .node .. => panic! "unexpected context-free info tree node"
