@@ -198,20 +198,11 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
       | ``Lean.Elab.Term.elabApp =>
         -- For app `(th (arg1 : A₁) (arg2 : A₂)) : R₁` we will create `apply Th` tactic with
         -- goalsBefore = `[R₁]` and goalsAfter = `[A₁, A₂]`
-        let ppContext := ctx.toPPContext tInfo.lctx
-        -- For type: (← ppExprWithInfos ppContext decl.type).fmt.pretty
         if let some type := tInfo.expectedType? then
-          -- match tInfo.expr with
-          -- |
-          let print (e : Expr) := do
-            let res ← ppExprWithInfos ppContext e
-            return res.fmt.pretty
-          let fn := tInfo.expr.getAppFn
-          let args := tInfo.expr.getAppArgs
-          let pArgs := ← args.mapM print
-
           let newStep? ← ctx.runMetaM tInfo.lctx do
             if (← Meta.isProof tInfo.expr) then
+              let fn := tInfo.expr.getAppFn
+              let args := tInfo.expr.getAppArgs
               let tacticString := s!"apply {← Meta.ppExpr fn}"
               let username := (← Meta.ppExpr tInfo.expr).pretty
               let goalsBefore :=
