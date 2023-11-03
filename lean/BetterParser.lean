@@ -197,15 +197,14 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
       match tInfo.elaborator with
       -- Other elab Q → (P ∧ Q) ∧ Q ∧ P : Prop @ ⟨5, 5⟩-⟨5, 33⟩ @ Lean.Elab.Term.elabDepArrow
       | ``Lean.Elab.Term.elabFun =>
-        dbg_trace "Dep arrow"
         let newStep? ← ctx.runMetaM tInfo.lctx do
           if !(← Meta.isProof tInfo.expr) then
             return none
-          let intros := tInfo.expr.getForallBinderNames
-          let body := tInfo.expr.getForallBody
-          let tacticString := s!"intros {intros}"
-          let username := (← Meta.ppExpr tInfo.expr).pretty
           if let some type := tInfo.expectedType? then
+            let username := (← Meta.ppExpr tInfo.expr).pretty
+            let intros := type.getForallBinderNames
+            let tacticString := s!"intros {intros}"
+            dbg_trace "Dep arrow {tInfo.expr}"
             let goalsBefore :=
               [{
                 username,
@@ -213,8 +212,8 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
                 hyps := ← getHyps,
                 id := username
               }]
-            let username₂ := (← Meta.ppExpr body).pretty
-            let bodyType ← Meta.inferType type
+            let bodyType := type.getForallBody
+            let username₂ := (← Meta.ppExpr bodyType).pretty
             let goalsAfter := [{
               username := username₂,
               type := (← Meta.ppExpr bodyType).pretty,
