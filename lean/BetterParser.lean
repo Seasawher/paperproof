@@ -1,6 +1,8 @@
 import Lean
 import Lean.Meta.Basic
+import Lean.Expr
 open Lean Elab Server
+open Lean Expr
 
 structure Hypothesis where
   username : String
@@ -202,9 +204,7 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
             return none
           if let some type := tInfo.expectedType? then
             let username := (← Meta.ppExpr tInfo.expr).pretty
-            let intros := type.getForallBinderNames
-            let tacticString := s!"intros {intros}"
-            dbg_trace "Dep arrow {tInfo.expr}"
+            let e := tInfo.expr
             let goalsBefore :=
               [{
                 username,
@@ -212,8 +212,10 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
                 hyps := ← getHyps,
                 id := username
               }]
-            let bodyType := type.getForallBody
-            let username₂ := (← Meta.ppExpr bodyType).pretty
+            let tacticString := s!"intro {e.bindingName!}"
+            let username₂ := (← Meta.ppExpr e.bindingBody!).pretty.replace "#0" e.bindingName!.toString
+            dbg_trace "Dep arrow {e.bindingName!} {← Meta.ppExpr e.bindingDomain!} {username} -- {username₂}"
+            let bodyType := ← Meta.inferType e.bindingBody!
             let goalsAfter := [{
               username := username₂,
               type := (← Meta.ppExpr bodyType).pretty,
