@@ -1,44 +1,11 @@
 import Lean
 import Lean.Meta.Basic
 import Lean.Expr
+import GetHyps
+import Models
+
 open Lean Elab Server
 open Lean Expr
-
-structure Hypothesis where
-  username : String
-  type : String
-  value : Option String
-  -- unique identifier for the hypothesis, fvarId
-  id : String
-  deriving Inhabited, ToJson, FromJson
-
-structure GoalInfo where
-  username : String
-  type : String
-  hyps : List Hypothesis
-  -- unique identifier for the goal, mvarId
-  id : String
-  deriving Inhabited, ToJson, FromJson
-
-instance : BEq GoalInfo where
-  beq g1 g2 := g1.id == g2.id
-
-instance : Hashable GoalInfo where
-  hash g := hash g.id
-
-structure TacticApplication where
-  tacticString : String
-  goalsBefore : List GoalInfo
-  goalsAfter : List GoalInfo
-  tacticDependsOn : List String
-  deriving Inhabited, ToJson, FromJson
-
-inductive ProofStep :=
-  | tacticApp (t : TacticApplication)
-  | haveDecl (t: TacticApplication)
-    (initialGoals: List GoalInfo)
-    (subSteps : List ProofStep)
-  deriving Inhabited, ToJson, FromJson
 
 def stepGoalsAfter (step : ProofStep) : List GoalInfo := match step with
   | .tacticApp t => t.goalsAfter
@@ -71,19 +38,6 @@ def findHypsUsedByTactic (goalId: MVarId) (goalDecl : MetavarDecl) (mctxAfter : 
   -- dbg_trace s!"Used {pretty}"
   return proofFvars.map (fun x => x.fvarId.name.toString) |>.toList
 
-def getHyps : MetaM (List Hypothesis):= do
-  (← read).lctx.foldlM (init := []) (fun acc decl => do
-    if decl.isAuxDecl || decl.isImplementationDetail then
-      return acc
-    let type ← Meta.ppExpr decl.type
-    let value ← decl.value?.mapM (Meta.ppExpr)
-    return ({
-      username := decl.userName.toString,
-      type := type.pretty,
-      value := value.map (·.pretty),
-      id := decl.fvarId.name.toString
-      } : Hypothesis) ::acc)
-
 -- Returns GoalInfo about unassigned goals from the provided list of goals
 def getGoals (printCtx: ContextInfo) (goals : List MVarId) (mctx : MetavarContext) : RequestM (List GoalInfo) := do
   goals.filterMapM fun id => do
@@ -97,10 +51,6 @@ def getGoals (printCtx: ContextInfo) (goals : List MVarId) (mctx : MetavarContex
     let ppContext := printCtx.toPPContext lctx
     let hyps ← ppContext.runMetaM getHyps
     return some ⟨ decl.userName.toString, (← ppExprWithInfos ppContext decl.type).fmt.pretty, hyps, id.name.toString ⟩
-
-structure Result where
-  steps : List ProofStep
-  allGoals : HashSet GoalInfo
 
 def getGoalsChange (ctx : ContextInfo) (tInfo : TacticInfo) : RequestM (List GoalInfo × List GoalInfo) := do
   -- We want to filter out `focus` like tactics which don't do any assignments

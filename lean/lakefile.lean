@@ -7,4 +7,7 @@ package Paperproof
 lean_lib Paperproof
 
 lean_lib BetterParser
+lean_lib GetHyps
+lean_lib TermInfoParser
+lean_lib Models
 lean_lib CheckIfUserIsStillTyping
