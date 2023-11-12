@@ -195,13 +195,14 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
         return {steps := .tacticApp {tacticApp with goalsAfter := goalsAfter ++ orphanedGoals.toList} :: steps,
                 allGoals}
     else if let .ofTermInfo tInfo := i then
-      -- Interesting elaborations:
-      match tInfo.elaborator with
-      -- Other elab Q → (P ∧ Q) ∧ Q ∧ P : Prop @ ⟨5, 5⟩-⟨5, 33⟩ @ Lean.Elab.Term.elabDepArrow
-      | ``Lean.Elab.Term.elabFun =>
-        let newStep? ← ctx.runMetaM tInfo.lctx do
-          if !(← Meta.isProof tInfo.expr) then
-            return none
+      let newStep? ← ctx.runMetaM tInfo.lctx do
+        if !(← Meta.isProof tInfo.expr) then
+          return none
+
+        -- Interesting elaborations:
+        match tInfo.elaborator with
+        -- Other elab Q → (P ∧ Q) ∧ Q ∧ P : Prop @ ⟨5, 5⟩-⟨5, 33⟩ @ Lean.Elab.Term.elabDepArrow
+        | ``Lean.Elab.Term.elabFun =>
           if let some type := tInfo.expectedType? then
             let username := (← Meta.ppExpr tInfo.expr).pretty
             let e := tInfo.expr
@@ -237,66 +238,52 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
             return some tacticApp
           else
             return none
-
-        if let some newStep := newStep? then
-          return { steps := .tacticApp newStep :: steps, allGoals := allSubGoals }
-        else
-          return { steps, allGoals := allSubGoals }
-
-      | ``Lean.Elab.Term.elabApp =>
-        -- For app `(th (arg1 : A₁) (arg2 : A₂)) : R₁` we will create `apply Th` tactic with
-        -- goalsBefore = `[R₁]` and goalsAfter = `[A₁, A₂]`
-        if let some type := tInfo.expectedType? then
-          let newStep? ← ctx.runMetaM tInfo.lctx do
-            if (← Meta.isProof tInfo.expr) then
-              let fn := tInfo.expr.getAppFn
-              let args := tInfo.expr.getAppArgs
-              let tacticString := s!"apply {← Meta.ppExpr fn}"
-              let username := (← Meta.ppExpr tInfo.expr).pretty
-              let goalsBefore :=
-                [{
+        | ``Lean.Elab.Term.elabApp =>
+          -- For app `(th (arg1 : A₁) (arg2 : A₂)) : R₁` we will create `apply Th` tactic with
+          -- goalsBefore = `[R₁]` and goalsAfter = `[A₁, A₂]`
+          if let some type := tInfo.expectedType? then
+            let fn := tInfo.expr.getAppFn
+            let args := tInfo.expr.getAppArgs
+            let tacticString := s!"apply {← Meta.ppExpr fn}"
+            let username := (← Meta.ppExpr tInfo.expr).pretty
+            let goalsBefore :=
+              [{
+                username,
+                type := (← Meta.ppExpr type).pretty,
+                hyps := ← getHyps,
+                id := username
+              }]
+            let goalsAfter ← args.toList.filterMapM fun arg => do
+              if ← Meta.isProof arg then
+                let type ← Meta.inferType arg
+                let username := (← Meta.ppExpr arg).pretty
+                return some {
                   username,
                   type := (← Meta.ppExpr type).pretty,
                   hyps := ← getHyps,
                   id := username
-                }]
-              let goalsAfter ← args.toList.filterMapM fun arg => do
-                if ← Meta.isProof arg then
-                  let type ← Meta.inferType arg
-                  let username := (← Meta.ppExpr arg).pretty
-                  return some {
-                    username,
-                    type := (← Meta.ppExpr type).pretty,
-                    hyps := ← getHyps,
-                    id := username
-                  }
-                else
-                  return none
-              let tacticDependsOn := []
-              let tacticApp: TacticApplication := {
-                tacticString,
-                goalsBefore,
-                goalsAfter,
-                tacticDependsOn
-              }
+                }
+              else
+                return none
+            let tacticDependsOn := []
+            let tacticApp: TacticApplication := {
+              tacticString,
+              goalsBefore,
+              goalsAfter,
+              tacticDependsOn
+            }
 
-              -- dbg_trace "App: {toJson tacticApp}"
-              return some tacticApp
-            else
-              return none
-
-          if let some newStep := newStep? then
-            return { steps := .tacticApp newStep :: steps, allGoals := allSubGoals }
+            -- dbg_trace "App: {toJson tacticApp}"
+            return some tacticApp
           else
-            return { steps, allGoals := allSubGoals }
-        else
-          dbg_trace "No expected type"
-      | _ =>
-        -- dbg_trace "Other elab {← tInfo.format ctx}"
-        return { steps, allGoals := allSubGoals}
-      --  { left := p, right := q } : P ∧ Q @ ⟨5, 2⟩†-⟨5, 8⟩† @ Lean.Elab.Term.elabApp
-      -- Abstraction?
-      return { steps, allGoals := allSubGoals}
+            dbg_trace "No expected type"
+            return none
+        | _ => return none
+
+      if let some newStep := newStep? then
+        return { steps := .tacticApp newStep :: steps, allGoals := allSubGoals }
+      else
+        return { steps, allGoals := allSubGoals }
     else
       return { steps, allGoals := allSubGoals}
   | none, .node .. => panic! "unexpected context-free info tree node"
