@@ -214,15 +214,21 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
               }]
             let tacticString := s!"intro {e.bindingName!}"
             let username₂ := (← Meta.ppExpr e.bindingBody!).pretty.replace "#0" e.bindingName!.toString
-            dbg_trace "Dep arrow {e.bindingName!} {← Meta.ppExpr e.bindingDomain!} {username} -- {username₂}"
+            let bindingDomain := ← Meta.ppExpr e.bindingDomain!
             let bodyType := ← Meta.inferType e.bindingBody!
+            let newHyp := {
+                        username := e.bindingName!.toString,
+                        type := bindingDomain.pretty,
+                        value := none,
+                        id := s!"_uniq.{e.bindingName!.toString}"}
             let goalsAfter := [{
               username := username₂,
               type := (← Meta.ppExpr bodyType).pretty,
               -- Add intros
-              hyps := ← getHyps,
+              hyps := newHyp :: (← getHyps),
               id := username₂
             }]
+            dbg_trace "Goals after: {toJson goalsAfter}"
             let tacticDependsOn := []
 
             let tacticApp: TacticApplication :=
