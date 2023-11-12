@@ -40,7 +40,7 @@ def parseTermInfo (ctx : ContextInfo) (tInfo: TermInfo):
         hyps := newHyp :: (← getHyps),
         id := username₂
       }]
-      dbg_trace "Goals after: {toJson goalsAfter}"
+      -- dbg_trace "Goals after: {toJson goalsAfter}"
       let tacticDependsOn := []
 
       let tacticApp: TacticApplication :=
@@ -52,41 +52,61 @@ def parseTermInfo (ctx : ContextInfo) (tInfo: TermInfo):
   | ``Lean.Elab.Term.elabApp =>
     -- For app `(th (arg1 : A₁) (arg2 : A₂)) : R₁` we will create `apply Th` tactic with
     -- goalsBefore = `[R₁]` and goalsAfter = `[A₁, A₂]`
-    if let some type := tInfo.expectedType? then
-      let fn := tInfo.expr.getAppFn
-      let args := tInfo.expr.getAppArgs
-      let tacticString := s!"apply {← Meta.ppExpr fn}"
-      let username := (← Meta.ppExpr tInfo.expr).pretty
-      let goalsBefore :=
-        [{
+    let some type := tInfo.expectedType?
+      | dbg_trace "Expected type" return none
+    let fn := tInfo.expr.getAppFn
+    let args := tInfo.expr.getAppArgs
+    let tacticString := s!"apply {← Meta.ppExpr fn}"
+    let username := (← Meta.ppExpr tInfo.expr).pretty
+    let goalsBefore :=
+      [{
+        username,
+        type := (← Meta.ppExpr type).pretty,
+        hyps := ← getHyps,
+        id := username
+      }]
+    let goalsAfter ← args.toList.filterMapM fun arg => do
+      if ← Meta.isProof arg then
+        let type ← Meta.inferType arg
+        let username := (← Meta.ppExpr arg).pretty
+        return some {
           username,
           type := (← Meta.ppExpr type).pretty,
           hyps := ← getHyps,
           id := username
-        }]
-      let goalsAfter ← args.toList.filterMapM fun arg => do
-        if ← Meta.isProof arg then
-          let type ← Meta.inferType arg
-          let username := (← Meta.ppExpr arg).pretty
-          return some {
-            username,
-            type := (← Meta.ppExpr type).pretty,
-            hyps := ← getHyps,
-            id := username
-          }
-        else
-          return none
-      let tacticDependsOn := []
-      let tacticApp: TacticApplication := {
-        tacticString,
-        goalsBefore,
-        goalsAfter,
-        tacticDependsOn
-      }
+        }
+      else
+        return none
+    let tacticDependsOn := []
+    let tacticApp: TacticApplication := {
+      tacticString,
+      goalsBefore,
+      goalsAfter,
+      tacticDependsOn
+    }
 
-      -- dbg_trace "App: {toJson tacticApp}"
-      return some tacticApp
-    else
-      dbg_trace "No expected type"
-      return none
-  | _ => return none
+    -- dbg_trace "App: {toJson tacticApp}"
+    return some tacticApp
+  | ``Lean.Elab.Term.elabIdent =>
+    let tacticString := s!"exact {tInfo.stx}"
+    let some type := tInfo.expectedType?
+      | dbg_trace "Expected type" return none
+    let username := (← Meta.ppExpr tInfo.expr).pretty
+
+    let tacticApp: TacticApplication := {
+      tacticString,
+      goalsBefore :=
+      [{
+        username,
+        type := (← Meta.ppExpr type).pretty,
+        hyps := ← getHyps,
+        id := username
+      }],
+      goalsAfter := [],
+      tacticDependsOn := []
+    }
+    dbg_trace "Tactic app: {toJson tacticApp}"
+
+    return some tacticApp
+  | _ =>
+    return none
