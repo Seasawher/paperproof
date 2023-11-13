@@ -13,7 +13,7 @@ structure Hypothesis where
 structure GoalInfo where
   username : String
   type : String
-  hyps : List Hypothesis 
+  hyps : List Hypothesis
   -- unique identifier for the goal, mvarId
   id : String
   deriving Inhabited, ToJson, FromJson
@@ -27,11 +27,15 @@ instance : Hashable GoalInfo where
 structure TacticApplication where
   tacticString : String
   goalsBefore : List GoalInfo
-  goalsAfter : List GoalInfo 
+  goalsAfter : List GoalInfo
   tacticDependsOn : List String
+  -- Those are the goals which were created for purposes of a hypothesis no the goal split.
+  -- For example in `have ⟨p, q⟩ := ⟨ by proof₁, by proof₂ ⟩`  those are types of `proof₁, proof₂`
+  -- It can be thougth as anonymous `tacticDependsOn` where goal is created inline instead of referring to the hypothesis.
+  tacticDependsOnGoals : List GoalInfo
   deriving Inhabited, ToJson, FromJson
 
-inductive ProofStep := 
+inductive ProofStep :=
   | tacticApp (t : TacticApplication)
   | haveDecl (t: TacticApplication)
     (initialGoals: List GoalInfo)
@@ -88,7 +92,7 @@ def getGoals (printCtx: ContextInfo) (goals : List MVarId) (mctx : MetavarContex
       return ({
         username := decl.userName.toString,
         type := type.fmt.pretty,
-        value := value.map (·.fmt.pretty), 
+        value := value.map (·.fmt.pretty),
         id := decl.fvarId.name.toString
         } : Hypothesis) ::acc)
     return some ⟨ decl.userName.toString, (← ppExprWithInfos ppContext decl.type).fmt.pretty, hyps, id.name.toString ⟩
@@ -142,7 +146,7 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
         | return {steps, allGoals}
       let some mainGoalDecl := tInfo.mctxBefore.findDecl? mainGoalId
         | return {steps, allGoals}
-      
+
       let tacticDependsOn ←
         ctx.runMetaM mainGoalDecl.lctx
           (findHypsUsedByTactic mainGoalId mainGoalDecl tInfo.mctxAfter)
@@ -150,7 +154,8 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
         tacticString,
         goalsBefore,
         goalsAfter,
-        tacticDependsOn
+        tacticDependsOn,
+        tacticDependsOnGoals := []
       }
 
       -- It's a tactic combinator
@@ -159,13 +164,13 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
         -- Something like `have p : a = a := rfl`
         if steps.isEmpty then
           return {steps := [.tacticApp tacticApp],
-                  allGoals} 
- 
+                  allGoals}
+
         let goals := (goalsBefore ++ goalsAfter).foldl HashSet.erase (noInEdgeGoals allGoals steps)
         -- Important for have := calc for example, e.g. calc 3 < 4 ... 4 < 5 ...
         let sortedGoals := goals.toArray.insertionSort (·.id < ·.id)
         -- TODO: have ⟨ p, q ⟩ : (3 = 3) ∧ (4 = 4) := ⟨ by rfl, by rfl ⟩ isn't supported yet
-        return {steps := [.haveDecl tacticApp sortedGoals.toList steps],
+        return {steps := .tacticApp { tacticApp with tacticDependsOnGoals := sortedGoals.toList} :: steps,
                 allGoals := HashSet.empty.insertMany (goalsBefore ++ goalsAfter)}
       | `(tactic| rw [$_,*] $(_)?)
       | `(tactic| rewrite [$_,*] $(_)?) =>
@@ -173,7 +178,7 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
           let res := tStr.trim.dropRightWhile (· == ',')
           -- rw puts final rfl on the "]" token
           if res == "]" then "rfl" else res
-        return {steps := steps.map fun a => 
+        return {steps := steps.map fun a =>
                   match a with
                   | .tacticApp a => .tacticApp { a with tacticString := s!"rw [{prettify a.tacticString}]" }
                   | x => x,

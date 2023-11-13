@@ -397,7 +397,29 @@ const getInitialGoal = (subSteps: LeanProofTree): LeanGoal | undefined => {
 const recursive = (subSteps: LeanProofTree, pretty: ConvertedProofTree) => {
   subSteps.forEach((subStep) => {
     if ("tacticApp" in subStep) {
-      handleTacticApp(subStep.tacticApp.t, pretty);
+      const initialGoals = subStep.tacticApp.t.tacticDependsOnGoals ?? [];
+      const windows = initialGoals.map((goal) => ({
+        id: newWindowId(),
+        // Parent window is such that has our goalId as a hypothesis.
+        // `have`'s fvarid won't equal `have's` mvarid however - so the only way to match them would be by the username. many `have`s may have the same username though, so let's just store out parentId.
+        parentId: "haveWindow",
+        goalNodes: [
+          {
+            text: goal.type,
+            name: goal.username,
+            id: goal.id,
+          },
+        ],
+        // `have`s don't introduce any new hypotheses
+        hypNodes: [],
+      }));
+
+      handleTacticApp(
+        subStep.tacticApp.t,
+        pretty,
+        windows.map((w) => w.id)
+      );
+      pretty.windows.push(...windows);
     } else if ("haveDecl" in subStep) {
       // TODO: Remove when new lean version reporting is set up.
       const initialGoals =
