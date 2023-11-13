@@ -35,24 +35,11 @@ structure TacticApplication where
   tacticDependsOnGoals : List GoalInfo
   deriving Inhabited, ToJson, FromJson
 
-inductive ProofStep :=
-  | tacticApp (t : TacticApplication)
-  | haveDecl (t: TacticApplication)
-    (initialGoals: List GoalInfo)
-    (subSteps : List ProofStep)
-  deriving Inhabited, ToJson, FromJson
-
-def stepGoalsAfter (step : ProofStep) : List GoalInfo := match step with
-  | .tacticApp t => t.goalsAfter
-  | .haveDecl t _ _ => t.goalsAfter
-
-def stepGoalsBefore (step : ProofStep) : List GoalInfo := match step with
-  | .tacticApp t => t.goalsBefore
-  | .haveDecl t _ _ => t.goalsBefore
+def ProofStep := TacticApplication
 
 def noInEdgeGoals (allGoals : HashSet GoalInfo) (steps : List ProofStep) : HashSet GoalInfo :=
   -- Some of the orphaned goals might be matched by tactics in sibling subtrees, e.g. for tacticSeq.
-  (steps.bind stepGoalsAfter).foldl HashSet.erase allGoals
+  (steps.bind (·.goalsAfter)).foldl HashSet.erase allGoals
 
 /-
   Instead of doing parsing of what user wrote (it wouldn't work for linarith etc),
@@ -98,7 +85,7 @@ def getGoals (printCtx: ContextInfo) (goals : List MVarId) (mctx : MetavarContex
     return some ⟨ decl.userName.toString, (← ppExprWithInfos ppContext decl.type).fmt.pretty, hyps, id.name.toString ⟩
 
 structure Result where
-  steps : List ProofStep
+  steps : List TacticApplication
   allGoals : HashSet GoalInfo
 
 def getGoalsChange (ctx : ContextInfo) (tInfo : TacticInfo) : RequestM (List GoalInfo × List GoalInfo) := do
@@ -163,14 +150,14 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
       | `(tactic| have $_:haveDecl) =>
         -- Something like `have p : a = a := rfl`
         if steps.isEmpty then
-          return {steps := [.tacticApp tacticApp],
+          return {steps := [tacticApp],
                   allGoals}
 
         let goals := (goalsBefore ++ goalsAfter).foldl HashSet.erase (noInEdgeGoals allGoals steps)
         -- Important for have := calc for example, e.g. calc 3 < 4 ... 4 < 5 ...
         let sortedGoals := goals.toArray.insertionSort (·.id < ·.id)
         -- TODO: have ⟨ p, q ⟩ : (3 = 3) ∧ (4 = 4) := ⟨ by rfl, by rfl ⟩ isn't supported yet
-        return {steps := .tacticApp { tacticApp with tacticDependsOnGoals := sortedGoals.toList} :: steps,
+        return {steps := { tacticApp with tacticDependsOnGoals := sortedGoals.toList} :: steps,
                 allGoals := HashSet.empty.insertMany (goalsBefore ++ goalsAfter)}
       | `(tactic| rw [$_,*] $(_)?)
       | `(tactic| rewrite [$_,*] $(_)?) =>
@@ -179,20 +166,18 @@ partial def BetterParser (context: Option ContextInfo) (infoTree : InfoTree) : R
           -- rw puts final rfl on the "]" token
           if res == "]" then "rfl" else res
         return {steps := steps.map fun a =>
-                  match a with
-                  | .tacticApp a => .tacticApp { a with tacticString := s!"rw [{prettify a.tacticString}]" }
-                  | x => x,
+                  { a with tacticString := s!"rw [{prettify a.tacticString}]" }
                 allGoals}
       | _ =>
         -- Don't add anything new if we already handled it in subtree.
-        if steps.map stepGoalsBefore |>.elem goalsBefore then
+        if steps.map (·.goalsBefore) |>.elem goalsBefore then
           return {steps, allGoals}
         -- It uses allSubGoals instead of allGoals to make tactics like `.` which focus [1, 2, 3] -> [1] goals work.
         -- TODO: Maybe we should just ignore tactics which goalsAfter is a subset of goalsBefore?
         -- But we will need to find a way to understand if tactic actually closed the goal, like `exact ...` and [1, 2] -> [2],
         -- or just focused it `.` and [1, 2] -> [1].
         let orphanedGoals := goalsBefore.foldl HashSet.erase (noInEdgeGoals allSubGoals steps)
-        return {steps := .tacticApp {tacticApp with goalsAfter := goalsAfter ++ orphanedGoals.toList} :: steps,
+        return {steps := {tacticApp with goalsAfter := goalsAfter ++ orphanedGoals.toList} :: steps,
                 allGoals}
     else
       return { steps, allGoals := allSubGoals}

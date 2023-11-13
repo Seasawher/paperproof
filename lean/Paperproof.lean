@@ -8,8 +8,12 @@ structure InputParams where
   pos : Lsp.Position
   deriving FromJson, ToJson
 
+inductive LegacyStepWrapping :=
+  | tacticApp (t : TacticApplication)
+  deriving Inhabited, ToJson, FromJson
+
 structure OutputParams where
-  steps : List ProofStep
+  steps : List LegacyStepWrapping
   deriving Inhabited, FromJson, ToJson
 
 @[server_rpc_method]
@@ -22,5 +26,5 @@ def getSnapshotData (params : InputParams) : RequestM (RequestTask OutputParams)
     if (parsedTree.steps.length == 0) then
       throwThe RequestError ⟨.invalidParams, "zeroProofSteps"⟩
     return {
-      steps := parsedTree.steps
+      steps := parsedTree.steps.map fun t => .tacticApp t
     }
